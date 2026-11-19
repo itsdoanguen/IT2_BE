@@ -42,6 +42,11 @@ public class SearchDto {
         private String category;
         private List<String> tags;
         private int total;
+        private int page;
+        private int size;
+        private int totalItems;
+        private int totalPages;
+        private List<String> availableTags;
         private boolean semanticUsed;
         private boolean guardrailBlocked;
         private String guardrailMessage;

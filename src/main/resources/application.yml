@@ -50,7 +50,7 @@ app:
     gemini-base-url: ${AI_GEMINI_BASE_URL:https://generativelanguage.googleapis.com}
     retrieval-base-url: ${AI_RETRIEVAL_BASE_URL:http://localhost:8000}
     retrieval-path: ${AI_RETRIEVAL_PATH:/api/search}
-    retrieval-top-k: ${AI_RETRIEVAL_TOP_K:5}
+    retrieval-top-k: ${AI_RETRIEVAL_TOP_K:8}
     max-output-tokens: ${AI_MAX_OUTPUT_TOKENS:2048}
     system-prompt: ${AI_SYSTEM_PROMPT:}
   storage:

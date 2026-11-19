@@ -12,13 +12,24 @@ import org.springframework.web.client.RestClientResponseException;
 import org.springframework.web.server.ResponseStatusException;
 import vn.udn.dut.it2.config.AiProperties;
 import vn.udn.dut.it2.model.dto.ChatDto;
+import vn.udn.dut.it2.model.dto.DocDetailDto;
+import vn.udn.dut.it2.model.entity.AcademicEvent;
+import vn.udn.dut.it2.model.entity.ProcedureCriteria;
+import vn.udn.dut.it2.model.entity.ProcedureDoc;
 import vn.udn.dut.it2.model.entity.Regulation;
+import vn.udn.dut.it2.model.entity.Student;
+import vn.udn.dut.it2.repository.AcademicEventRepository;
+import vn.udn.dut.it2.repository.ProcedureCriteriaRepository;
+import vn.udn.dut.it2.repository.ProcedureDocRepository;
 import vn.udn.dut.it2.repository.RegulationRepository;
+import vn.udn.dut.it2.repository.StudentRepository;
 
+import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 
 @Slf4j
@@ -27,16 +38,22 @@ import java.util.Map;
 public class AiChatService {
 
     private static final List<String> DEFAULT_SUGGESTIONS = Arrays.asList(
-            "Tiêu chuẩn học bổng loại Giỏi là bao nhiêu?",
-            "Điều kiện số tín chỉ tối thiểu để xét học bổng?",
-            "Thủ tục xin cấp giấy xác nhận sinh viên trực tuyến?",
+            "Điều kiện xét học bổng khuyến khích học tập loại Giỏi là bao nhiêu?",
+            "Sinh viên bị cảnh báo học tập hoặc buộc thôi học khi nào?",
+            "Thủ tục xin cấp Giấy xác nhận sinh viên thực hiện như thế nào?",
             "Hạn chót rút bớt học phần kỳ này là khi nào?"
     );
+
+    private static final DateTimeFormatter EVENT_DATE_FMT = DateTimeFormatter.ofPattern("dd/MM/yyyy");
 
     private final AiProperties aiProperties;
     private final RestClient aiRestClient;
     private final ObjectMapper objectMapper;
     private final RegulationRepository regulationRepository;
+    private final ProcedureDocRepository procedureDocRepository;
+    private final ProcedureCriteriaRepository procedureCriteriaRepository;
+    private final AcademicEventRepository academicEventRepository;
+    private final StudentRepository studentRepository;
 
     public ChatDto.Response processChat(ChatDto.Request request) {
         String provider = aiProperties.getProvider() == null ? "mock" : aiProperties.getProvider().trim();
@@ -74,18 +91,113 @@ public class AiChatService {
                     .build();
         }
 
-        String context = retrieval.path("context").asText("");
-        if (retrieval.path("total_found").asInt(0) == 0 || context.isBlank()) {
-            log.info("[AI-CHAT] No relevant chunks found in ChromaDB; skipping Gemini call");
+        String legalContext = retrieval.path("context").asText("");
+        String portalContext = buildPortalContext(request.getMessage(), request.getStudentCode());
+
+        if ((retrieval.path("total_found").asInt(0) == 0 || legalContext.isBlank()) && portalContext.isBlank()) {
+            log.info("[AI-CHAT] No relevant chunks in ChromaDB or Portal DB; skipping Gemini call");
             return ChatDto.Response.builder()
-                    .answer("Hiện tại hệ thống chưa tìm thấy điều khoản phù hợp trong kho văn bản pháp quy DUT cho câu hỏi này. "
+                    .answer("Hiện tại hệ thống chưa tìm thấy điều khoản phù hợp trong kho văn bản pháp quy hoặc dữ liệu Cổng Sinh viên DUT cho câu hỏi này. "
                             + "Vui lòng diễn đạt cụ thể hơn hoặc liên hệ Phòng Đào tạo / Phòng Công tác Sinh viên để được hỗ trợ.")
                     .sources(List.of())
                     .suggestions(DEFAULT_SUGGESTIONS)
                     .build();
         }
 
-        return generateAnswer(request, retrieval, apiKey);
+        String combinedContext = combineContext(legalContext, portalContext);
+        return generateAnswer(request, retrieval, combinedContext, apiKey);
+    }
+
+    private String combineContext(String legalContext, String portalContext) {
+        if (portalContext == null || portalContext.isBlank()) {
+            return legalContext;
+        }
+        if (legalContext == null || legalContext.isBlank()) {
+            return portalContext;
+        }
+        return portalContext + "\n\n=== VĂN BẢN PHÁP QUY TRÍCH XUẤT ===\n" + legalContext;
+    }
+
+    private String buildPortalContext(String query, String studentCode) {
+        String lower = query == null ? "" : query.toLowerCase(Locale.ROOT);
+        StringBuilder sb = new StringBuilder();
+
+        if (studentCode != null && !studentCode.isBlank()) {
+            studentRepository.findByStudentCode(studentCode.trim()).ifPresent((Student st) ->
+                    sb.append("[HỒ SƠ SINH VIÊN ĐANG ĐĂNG NHẬP] ")
+                            .append(st.getFullName())
+                            .append(" (MSSV: ").append(st.getStudentCode())
+                            .append(", Lớp: ").append(st.getClassName())
+                            .append(", ").append(st.getFaculty())
+                            .append(") | ĐTBCHK (thang 10): ").append(st.getGpa())
+                            .append(" | ĐRL: ").append(st.getTrainingPoint())
+                            .append(" | Tín chỉ: ").append(st.getAccumulatedCredits())
+                            .append("/").append(st.getTotalCredits())
+                            .append("\n"));
+        }
+
+        List<AcademicEvent> events = academicEventRepository.findAll();
+        if (events != null && !events.isEmpty()) {
+            sb.append("\n[LỊCH & MỐC HẠN CHÓT HỌC VỤ CỔNG SINH VIÊN DUT]\n");
+            for (AcademicEvent ev : events) {
+                String dateStr = ev.getEventDate() != null ? ev.getEventDate().format(EVENT_DATE_FMT) : "";
+                sb.append("- ").append(Boolean.TRUE.equals(ev.getIsDeadline()) ? "[HẠN CHÓT] " : "[SỰ KIỆN] ")
+                        .append(ev.getTitle())
+                        .append(" (Ngày: ").append(dateStr)
+                        .append(", Phạm vi: ").append(ev.getClassScope())
+                        .append("): ").append(ev.getDescription() == null ? "" : ev.getDescription())
+                        .append("\n");
+            }
+        }
+
+        List<ProcedureDoc> procedures = procedureDocRepository.findAllByOrderByIdAsc();
+        if (procedures != null && !procedures.isEmpty()) {
+            boolean wantsProcedure = containsAny(lower,
+                    "thủ tục", "thu tuc", "biểu mẫu", "bieu mau", "một cửa", "mot cua",
+                    "trực tuyến", "truc tuyen", "xác nhận", "xac nhan", "phúc khảo", "phuc khao",
+                    "bảo lưu", "bao luu", "tạm dừng", "ký túc xá", "ktx", "học bổng", "hoc bong", "nộp đơn");
+            if (wantsProcedure) {
+                sb.append("\n[THỦ TỤC HÀNH CHÍNH & BIỂU MẪU MỘT CỬA DUT]\n");
+                for (ProcedureDoc doc : procedures) {
+                    sb.append("* Thủ tục #").append(doc.getId()).append(": ").append(doc.getTitle())
+                            .append(" — ").append(doc.getSummary() == null ? "" : doc.getSummary())
+                            .append(" (Tải mẫu: ").append(doc.getFileUrl()).append(")\n");
+                    if (doc.getSteps() != null) {
+                        for (DocDetailDto.Step step : doc.getSteps()) {
+                            sb.append("  + Bước ").append(step.getOrder()).append(" (").append(step.getTitle())
+                                    .append("): ").append(step.getDescription()).append("\n");
+                        }
+                    }
+                }
+            }
+        }
+
+        if (containsAny(lower, "học bổng", "hoc bong", "gpa", "rèn luyện", "ren luyen", "1414", "xuất sắc", "loại giỏi", "loai gioi", "tiền", "tín chỉ")) {
+            List<ProcedureCriteria> criteriaList = procedureCriteriaRepository.findByProcedureName("Học bổng Khuyến khích Học tập");
+            if (criteriaList != null && !criteriaList.isEmpty()) {
+                sb.append("\n[BẢNG TIÊU CHUẨN & MỨC HỌC BỔNG KKHT THEO QĐ 1414/QĐ-ĐHBK (THANG ĐIỂM 10)]\n");
+                for (ProcedureCriteria c : criteriaList) {
+                    sb.append("- ").append(c.getGradeLevel())
+                            .append(": ĐTBCHK >= ").append(c.getMinGpa())
+                            .append(c.getMaxGpa() != null ? " đến " + c.getMaxGpa() : "")
+                            .append(", ĐRL >= ").append(c.getMinTrainingPoint())
+                            .append(" (").append(c.getDescription()).append(")\n");
+                }
+                sb.append("- Mức học bổng (Điều 6 QĐ 1414/QĐ-ĐHBK): Loại Khá (C) = 100% mức học phí hiện hành của CTĐT đối với các học phần học lần đầu; Loại Giỏi (B) = 120% mức loại Khá; Loại Xuất sắc (A) = 150% mức loại Khá.\n");
+                sb.append("- Điều kiện kèm theo (Điều 5 QĐ 1414/QĐ-ĐHBK): tổng số tín chỉ học phần lần đầu trong kỳ >= 15 tín chỉ (trừ kỳ thiết kế < 15), không có học phần nào dưới điểm 5,0 (thang 10), không chịu kỷ luật từ khiển trách trở lên.\n");
+            }
+        }
+
+        return sb.toString().trim();
+    }
+
+    private static boolean containsAny(String haystack, String... needles) {
+        for (String needle : needles) {
+            if (haystack.contains(needle)) {
+                return true;
+            }
+        }
+        return false;
     }
 
     private JsonNode retrieveContext(String message) {
@@ -126,10 +238,7 @@ public class AiChatService {
         }
     }
 
-    private ChatDto.Response generateAnswer(ChatDto.Request request, JsonNode retrieval, String apiKey) {
-        String context = retrieval.has("context")
-                ? retrieval.get("context").asText()
-                : retrieval.toString();
+    private ChatDto.Response generateAnswer(ChatDto.Request request, JsonNode retrieval, String context, String apiKey) {
         String systemPrompt = aiProperties.getSystemPrompt();
         if (systemPrompt == null || systemPrompt.isBlank()) {
             systemPrompt = "Answer only from the supplied context and return valid JSON.";
@@ -161,7 +270,14 @@ public class AiChatService {
 
         ResponseStatusException lastError = null;
         boolean transientFailure = false;
+        long budgetStartMs = System.currentTimeMillis();
+        final long maxBudgetMs = 28_000L;
         for (int idx = 0; idx < candidateModels.size(); idx++) {
+            if (idx > 0 && System.currentTimeMillis() - budgetStartMs > maxBudgetMs) {
+                log.warn("[AI-CHAT] Retry time budget exceeded ({} ms); returning fallback",
+                        System.currentTimeMillis() - budgetStartMs);
+                break;
+            }
             String model = candidateModels.get(idx);
             String endpointNoKey = aiProperties.getGeminiBaseUrl() + "/v1beta/models/" + model + ":generateContent";
             long start = System.currentTimeMillis();
@@ -309,6 +425,12 @@ public class AiChatService {
         if (response.getSources() == null) {
             response.setSources(new ArrayList<>());
         } else {
+            response.getSources().removeIf(s -> s == null
+                    || s.getDocumentNumber() == null
+                    || s.getDocumentNumber().isBlank()
+                    || s.getDocumentNumber().trim().equalsIgnoreCase("N/A")
+                    || s.getDocumentNumber().trim().equalsIgnoreCase("none")
+                    || s.getDocumentNumber().trim().equalsIgnoreCase("không có"));
             enrichSourceUrls(response.getSources());
         }
         if (response.getSuggestions() == null) {
