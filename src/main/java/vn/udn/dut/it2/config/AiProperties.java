@@ -11,7 +11,7 @@ public class AiProperties {
 
     private String provider = "mock";
     private String apiKey;
-    private String model = "gemini-2.0-flash";
+    private String model = "gemini-3.1-flash-lite-preview";
     private String geminiBaseUrl = "https://generativelanguage.googleapis.com";
     private String retrievalBaseUrl = "http://localhost:8000";
     private String retrievalPath = "/api/search";

@@ -98,6 +98,9 @@ public class SearchService {
                 .map(ScoredItem::item)
                 .toList();
 
+        log.info("[SEARCH] query='{}' category={} tags={} -> total={}, semanticUsed={}, blocked={}",
+                normalizedQuery, normalizedCategory, normalizedTags, items.size(), semanticLookup.used, false);
+
         return SearchDto.Response.builder()
                 .query(normalizedQuery)
                 .category(normalizedCategory)

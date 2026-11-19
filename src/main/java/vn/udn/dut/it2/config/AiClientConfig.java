@@ -22,7 +22,7 @@ public class AiClientConfig {
                 .connectTimeout(Duration.ofSeconds(10))
                 .build();
         JdkClientHttpRequestFactory requestFactory = new JdkClientHttpRequestFactory(httpClient);
-        requestFactory.setReadTimeout(Duration.ofSeconds(60));
+        requestFactory.setReadTimeout(Duration.ofSeconds(35));
         return RestClient.builder()
                 .requestFactory(requestFactory)
                 .build();

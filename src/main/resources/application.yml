@@ -46,7 +46,7 @@ app:
   ai:
     provider: ${AI_PROVIDER:mock}
     api-key: ${AI_API_KEY:}
-    model: ${AI_MODEL:gemini-2.0-flash}
+    model: ${AI_MODEL:gemini-3.1-flash-lite-preview}
     gemini-base-url: ${AI_GEMINI_BASE_URL:https://generativelanguage.googleapis.com}
     retrieval-base-url: ${AI_RETRIEVAL_BASE_URL:http://localhost:8000}
     retrieval-path: ${AI_RETRIEVAL_PATH:/api/search}
