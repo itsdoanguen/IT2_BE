@@ -52,7 +52,18 @@ public class RegulationService {
         if (documentNumber == null || documentNumber.isBlank()) {
             return Optional.empty();
         }
-        return regulationRepository.findFirstByDocumentNumberIgnoreCase(documentNumber.trim());
+        String trimmed = documentNumber.trim();
+        Optional<Regulation> exact = regulationRepository.findFirstByDocumentNumberIgnoreCase(trimmed);
+        if (exact.isPresent()) {
+            return exact;
+        }
+        String stripped = trimmed
+                .replaceFirst("(?iu)^(?:quyết định|quyet dinh|thông tư|thong tu|công văn|cong van|nghị định|nghi dinh|văn bản|van ban|qđ|qd|tt|cv|số|so)\\s+", "")
+                .trim();
+        if (!stripped.isEmpty() && !stripped.equalsIgnoreCase(trimmed)) {
+            return regulationRepository.findFirstByDocumentNumberIgnoreCase(stripped);
+        }
+        return Optional.empty();
     }
 
     public List<Regulation> getAll() {
