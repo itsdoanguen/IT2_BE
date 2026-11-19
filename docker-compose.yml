@@ -45,7 +45,11 @@ services:
       AI_RETRIEVAL_PATH: ${AI_RETRIEVAL_PATH:-/api/search}
       AI_RETRIEVAL_TOP_K: ${AI_RETRIEVAL_TOP_K:-5}
       AI_MAX_OUTPUT_TOKENS: ${AI_MAX_OUTPUT_TOKENS:-2048}
+      APP_STORAGE_PDF_CACHE_DIR: /app/pdf-cache
+      APP_STORAGE_MARKDOWN_ZIP: /app/data/raw_markdown.zip
       PORT: 8080
+    volumes:
+      - it2_pdf_cache:/app/pdf-cache
     ports:
       - "${PORT:-8080}:8080"
     networks:
@@ -67,6 +71,8 @@ services:
 
 volumes:
   postgres_data:
+    driver: local
+  it2_pdf_cache:
     driver: local
 
 networks:

@@ -33,5 +33,6 @@ target/
 Thumbs.db
 *.log
 *.env
+data/pdf-cache/
 application-local.properties
 application-local.yml

@@ -10,5 +10,7 @@ import org.springframework.boot.context.properties.ConfigurationProperties;
 public class StorageProperties {
 
     private String pdfDir = "../crawl-data/output/files";
+    private String pdfCacheDir = "./data/pdf-cache";
     private String markdownDir = "../dut_rag_dataset_processed/raw_markdown";
+    private String markdownZip = "./data/raw_markdown.zip";
 }

@@ -55,4 +55,6 @@ app:
     system-prompt: ${AI_SYSTEM_PROMPT:}
   storage:
     pdf-dir: ${APP_STORAGE_PDF_DIR:../crawl-data/output/files}
+    pdf-cache-dir: ${APP_STORAGE_PDF_CACHE_DIR:./data/pdf-cache}
     markdown-dir: ${APP_STORAGE_MARKDOWN_DIR:../dut_rag_dataset_processed/raw_markdown}
+    markdown-zip: ${APP_STORAGE_MARKDOWN_ZIP:./data/raw_markdown.zip}
