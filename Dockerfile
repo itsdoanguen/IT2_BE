@@ -8,11 +8,11 @@ WORKDIR /app
 
 # Copy pom.xml first to take advantage of Docker layer caching & BuildKit m2 cache
 COPY pom.xml .
-RUN --mount=type=cache,target=/root/.m2 mvn dependency:go-offline -B
+RUN --mount=type=cache,id=it2-be-m2,target=/root/.m2 mvn dependency:go-offline -B
 
 # Copy source code and build package (reusing persistent /root/.m2 cache)
 COPY src ./src
-RUN --mount=type=cache,target=/root/.m2 mvn package -DskipTests -B
+RUN --mount=type=cache,id=it2-be-m2,target=/root/.m2 mvn package -DskipTests -B
 
 # ==========================================
 # STAGE 2: Lightweight Runtime with JRE 21
