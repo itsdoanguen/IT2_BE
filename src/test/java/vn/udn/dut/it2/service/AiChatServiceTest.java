@@ -11,14 +11,22 @@ import org.springframework.test.web.client.MockRestServiceServer;
 import org.springframework.web.client.RestClient;
 import vn.udn.dut.it2.config.AiProperties;
 import vn.udn.dut.it2.model.dto.ChatDto;
+import vn.udn.dut.it2.model.entity.AcademicEvent;
 import vn.udn.dut.it2.model.entity.Regulation;
+import vn.udn.dut.it2.repository.AcademicEventRepository;
+import vn.udn.dut.it2.repository.ProcedureCriteriaRepository;
+import vn.udn.dut.it2.repository.ProcedureDocRepository;
 import vn.udn.dut.it2.repository.RegulationRepository;
+import vn.udn.dut.it2.repository.StudentRepository;
 
+import java.time.LocalDateTime;
+import java.util.List;
 import java.util.Optional;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.web.client.match.MockRestRequestMatchers.requestTo;
+import static org.springframework.test.web.client.response.MockRestResponseCreators.withServiceUnavailable;
 import static org.springframework.test.web.client.response.MockRestResponseCreators.withSuccess;
 
 @ExtendWith(MockitoExtension.class)
@@ -26,6 +34,14 @@ class AiChatServiceTest {
 
     @Mock
     private RegulationRepository regulationRepository;
+    @Mock
+    private ProcedureDocRepository procedureDocRepository;
+    @Mock
+    private ProcedureCriteriaRepository procedureCriteriaRepository;
+    @Mock
+    private AcademicEventRepository academicEventRepository;
+    @Mock
+    private StudentRepository studentRepository;
 
     private MockRestServiceServer mockServer;
     private AiProperties aiProperties;
@@ -44,7 +60,15 @@ class AiChatServiceTest {
         aiProperties.setRetrievalBaseUrl("http://ai:8000");
         aiProperties.setRetrievalPath("/api/search");
 
-        aiChatService = new AiChatService(aiProperties, builder.build(), new ObjectMapper(), regulationRepository);
+        aiChatService = new AiChatService(
+                aiProperties,
+                builder.build(),
+                new ObjectMapper(),
+                regulationRepository,
+                procedureDocRepository,
+                procedureCriteriaRepository,
+                academicEventRepository,
+                studentRepository);
     }
 
     @Test
@@ -113,5 +137,100 @@ class AiChatServiceTest {
         assertThat(res.getAnswer()).contains("1414/QĐ-ĐHBK");
         assertThat(res.getSources()).hasSize(1);
         assertThat(res.getSources().get(0).getPdfUrl()).isEqualTo("http://dut.udn.vn/files/1414.pdf");
+    }
+
+    @Test
+    void processChat_returnsExtractiveFallbackWhenAllGeminiModelsReturn503() {
+        mockServer.expect(requestTo("http://ai:8000/api/search"))
+                .andRespond(withSuccess("""
+                        {
+                          "query": "cảnh cáo học vụ",
+                          "top_k": 5,
+                          "total_found": 1,
+                          "blocked": false,
+                          "context": "[VĂN BẢN: 2244/QĐ-ĐHBK] Điều 12: Cảnh báo học tập.",
+                          "results": [
+                            {
+                              "content": "Sinh viên không tích lũy đủ tín chỉ tối thiểu bị cảnh báo học tập.",
+                              "metadata": {
+                                "document_number": "2244/QĐ-ĐHBK",
+                                "document_title": "Quy chế đào tạo",
+                                "article_number": "Điều 12",
+                                "clause_number": "1"
+                              }
+                            }
+                          ]
+                        }
+                        """, MediaType.APPLICATION_JSON));
+
+        mockServer.expect(requestTo("https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=test-key"))
+                .andRespond(withServiceUnavailable());
+        mockServer.expect(requestTo("https://generativelanguage.googleapis.com/v1beta/models/gemini-3.1-flash-lite-preview:generateContent?key=test-key"))
+                .andRespond(withServiceUnavailable());
+        mockServer.expect(requestTo("https://generativelanguage.googleapis.com/v1beta/models/gemini-3.1-flash-lite:generateContent?key=test-key"))
+                .andRespond(withServiceUnavailable());
+        mockServer.expect(requestTo("https://generativelanguage.googleapis.com/v1beta/models/gemini-flash-lite-latest:generateContent?key=test-key"))
+                .andRespond(withServiceUnavailable());
+
+        when(regulationRepository.findFirstByDocumentNumberIgnoreCase("2244/QĐ-ĐHBK"))
+                .thenReturn(Optional.of(Regulation.builder()
+                        .documentNumber("2244/QĐ-ĐHBK")
+                        .pdfUrl("http://dut.udn.vn/files/2244.pdf")
+                        .build()));
+
+        ChatDto.Response res = aiChatService.processChat(new ChatDto.Request("cảnh cáo học vụ", "102230001"));
+
+        mockServer.verify();
+        assertThat(res.getAnswer()).contains("2244/QĐ-ĐHBK");
+        assertThat(res.getSources()).hasSize(1);
+        assertThat(res.getSources().get(0).getPdfUrl()).isEqualTo("http://dut.udn.vn/files/2244.pdf");
+    }
+
+    @Test
+    void processChat_usesPortalEventsAndProceduresEvenWhenVectorReturnsZero() {
+        when(academicEventRepository.findAll()).thenReturn(List.of(
+                AcademicEvent.builder()
+                        .title("Hạn rút bớt học phần tín chỉ đợt 2")
+                        .eventDate(LocalDateTime.of(2026, 12, 1, 17, 0))
+                        .isDeadline(true)
+                        .classScope("ALL")
+                        .description("Hạn cuối nộp đơn hủy học phần")
+                        .build()
+        ));
+
+        mockServer.expect(requestTo("http://ai:8000/api/search"))
+                .andRespond(withSuccess("""
+                        {
+                          "query": "Hạn chót rút bớt học phần kỳ này là khi nào?",
+                          "top_k": 10,
+                          "total_found": 0,
+                          "blocked": false,
+                          "context": "",
+                          "results": []
+                        }
+                        """, MediaType.APPLICATION_JSON));
+
+        mockServer.expect(requestTo("https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=test-key"))
+                .andRespond(withSuccess("""
+                        {
+                          "candidates": [
+                            {
+                              "content": {
+                                "parts": [
+                                  {
+                                    "text": "{\\"answer\\":\\"Hạn chót rút bớt học phần tín chỉ đợt 2 là ngày 01/12/2026.\\",\\"sources\\":[],\\"suggestions\\":[]}"
+                                  }
+                                ]
+                              }
+                            }
+                          ]
+                        }
+                        """, MediaType.APPLICATION_JSON));
+
+        ChatDto.Response res = aiChatService.processChat(
+                new ChatDto.Request("Hạn chót rút bớt học phần kỳ này là khi nào?", "102230001"));
+
+        mockServer.verify();
+        assertThat(res.getAnswer()).contains("01/12/2026");
     }
 }

@@ -11,13 +11,16 @@ import vn.udn.dut.it2.model.dto.SearchDto;
 import vn.udn.dut.it2.model.entity.Regulation;
 import vn.udn.dut.it2.repository.RegulationRepository;
 
+import java.text.Collator;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Set;
 
 @Slf4j
 @Service
@@ -34,29 +37,45 @@ public class SearchService {
             List<String> tags,
             int limit,
             boolean useSemantic) {
+        return search(query, category, tags, 1, limit, useSemantic);
+    }
+
+    public SearchDto.Response search(
+            String query,
+            String category,
+            List<String> tags,
+            int page,
+            int size,
+            boolean useSemantic) {
 
         String normalizedQuery = query == null ? "" : query.trim();
         String normalizedCategory = (category == null || category.isBlank()) ? "ALL" : category.trim();
         List<String> normalizedTags = normalizeTags(tags);
-        int boundedLimit = Math.max(1, Math.min(limit, 100));
+        int boundedSize = Math.max(1, Math.min(size, 60));
 
-        List<Regulation> candidates = regulationRepository.searchRegulations(normalizedCategory, null);
-        if (!normalizedTags.isEmpty()) {
-            candidates = candidates.stream()
-                    .filter(reg -> hasAllTags(reg, normalizedTags))
-                    .toList();
-        }
+        List<Regulation> categoryCandidates = regulationRepository.searchRegulations(normalizedCategory, null);
+        List<String> availableTags = collectAvailableTags(categoryCandidates, normalizedTags);
+        List<Regulation> candidates = normalizedTags.isEmpty()
+                ? categoryCandidates
+                : categoryCandidates.stream()
+                        .filter(reg -> hasAllTags(reg, normalizedTags))
+                        .toList();
 
         if (normalizedQuery.isBlank()) {
-            List<SearchDto.SearchItem> items = candidates.stream()
-                    .limit(boundedLimit)
+            PageSlice<Regulation> slice = paginate(candidates, page, boundedSize);
+            List<SearchDto.SearchItem> items = slice.items().stream()
                     .map(reg -> toSearchItem(reg, null))
                     .toList();
             return SearchDto.Response.builder()
                     .query("")
                     .category(normalizedCategory)
                     .tags(normalizedTags)
-                    .total(items.size())
+                    .total(slice.totalItems())
+                    .page(slice.page())
+                    .size(boundedSize)
+                    .totalItems(slice.totalItems())
+                    .totalPages(slice.totalPages())
+                    .availableTags(availableTags)
                     .semanticUsed(false)
                     .guardrailBlocked(false)
                     .items(items)
@@ -73,6 +92,11 @@ public class SearchService {
                     .category(normalizedCategory)
                     .tags(normalizedTags)
                     .total(0)
+                    .page(1)
+                    .size(boundedSize)
+                    .totalItems(0)
+                    .totalPages(0)
+                    .availableTags(availableTags)
                     .semanticUsed(true)
                     .guardrailBlocked(true)
                     .guardrailMessage(semanticLookup.refusalMessage)
@@ -93,16 +117,25 @@ public class SearchService {
         }
 
         scored.sort(Comparator.comparingDouble(ScoredItem::combinedScore).reversed());
-        List<SearchDto.SearchItem> items = scored.stream()
-                .limit(boundedLimit)
+        PageSlice<ScoredItem> slice = paginate(scored, page, boundedSize);
+        List<SearchDto.SearchItem> items = slice.items().stream()
                 .map(ScoredItem::item)
                 .toList();
+
+        log.info("[SEARCH] query='{}' category={} tags={} page={}/{} size={} -> totalItems={}, semanticUsed={}, blocked={}",
+                normalizedQuery, normalizedCategory, normalizedTags, slice.page(), slice.totalPages(), boundedSize,
+                slice.totalItems(), semanticLookup.used, false);
 
         return SearchDto.Response.builder()
                 .query(normalizedQuery)
                 .category(normalizedCategory)
                 .tags(normalizedTags)
-                .total(items.size())
+                .total(slice.totalItems())
+                .page(slice.page())
+                .size(boundedSize)
+                .totalItems(slice.totalItems())
+                .totalPages(slice.totalPages())
+                .availableTags(availableTags)
                 .semanticUsed(semanticLookup.used)
                 .guardrailBlocked(false)
                 .items(items)
@@ -255,6 +288,35 @@ public class SearchService {
                 .matchedExcerpt(hit != null ? hit.excerpt : null)
                 .build();
     }
+
+    private static List<String> collectAvailableTags(List<Regulation> docs, List<String> selectedTags) {
+        Set<String> tagSet = new LinkedHashSet<>(selectedTags);
+        for (Regulation reg : docs) {
+            if (reg.getTags() != null) {
+                for (String t : reg.getTags()) {
+                    if (t != null && !t.isBlank()) {
+                        tagSet.add(t.trim());
+                    }
+                }
+            }
+        }
+        Collator viCollator = Collator.getInstance(Locale.forLanguageTag("vi-VN"));
+        return tagSet.stream().sorted(viCollator).toList();
+    }
+
+    private static <T> PageSlice<T> paginate(List<T> all, int requestedPage, int size) {
+        int totalItems = all.size();
+        if (totalItems == 0) {
+            return new PageSlice<>(List.of(), 1, 0, 0);
+        }
+        int totalPages = (int) Math.ceil((double) totalItems / size);
+        int safePage = Math.max(1, Math.min(requestedPage, totalPages));
+        int fromIndex = (safePage - 1) * size;
+        int toIndex = Math.min(fromIndex + size, totalItems);
+        return new PageSlice<>(all.subList(fromIndex, toIndex), safePage, totalItems, totalPages);
+    }
+
+    private record PageSlice<T>(List<T> items, int page, int totalItems, int totalPages) {}
 
     private record SemanticHit(double score, String clause, String excerpt) {}
 

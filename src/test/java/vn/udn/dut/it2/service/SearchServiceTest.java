@@ -176,4 +176,25 @@ class SearchServiceTest {
         assertThat(response.getGuardrailMessage()).isEqualTo("Không hỗ trợ viết code.");
         assertThat(response.getItems()).isEmpty();
     }
+
+    @Test
+    void search_paginatesResultsAndReportsTotalItemsAndTags() {
+        when(regulationRepository.searchRegulations("ALL", null))
+                .thenReturn(List.of(scholarshipDoc, trainingDoc));
+
+        SearchDto.Response page1 = searchService.search("", "ALL", List.of(), 1, 1, false);
+        assertThat(page1.getPage()).isEqualTo(1);
+        assertThat(page1.getSize()).isEqualTo(1);
+        assertThat(page1.getTotalItems()).isEqualTo(2);
+        assertThat(page1.getTotalPages()).isEqualTo(2);
+        assertThat(page1.getItems()).hasSize(1);
+        assertThat(page1.getItems().get(0).getDocumentNumber()).isEqualTo("3121/QĐ-BGDĐT");
+        assertThat(page1.getAvailableTags()).contains("Học bổng", "Đào tạo");
+
+        SearchDto.Response page2 = searchService.search("", "ALL", List.of(), 2, 1, false);
+        assertThat(page2.getPage()).isEqualTo(2);
+        assertThat(page2.getTotalItems()).isEqualTo(2);
+        assertThat(page2.getItems()).hasSize(1);
+        assertThat(page2.getItems().get(0).getDocumentNumber()).isEqualTo("17/2021/TT-BGDĐT");
+    }
 }

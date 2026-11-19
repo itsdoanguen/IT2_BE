@@ -30,7 +30,9 @@ public class SearchController {
             @RequestParam(required = false, defaultValue = "ALL") String category,
             @RequestParam(required = false) List<String> tag,
             @RequestParam(required = false) List<String> tags,
-            @RequestParam(required = false, defaultValue = "30") int limit,
+            @RequestParam(required = false, defaultValue = "1") int page,
+            @RequestParam(required = false) Integer size,
+            @RequestParam(required = false) Integer limit,
             @RequestParam(required = false, defaultValue = "true") boolean semantic) {
 
         String effectiveQuery = (q != null && !q.isBlank()) ? q : keyword;
@@ -42,6 +44,7 @@ public class SearchController {
             mergedTags.addAll(tags);
         }
 
-        return ResponseEntity.ok(searchService.search(effectiveQuery, category, mergedTags, limit, semantic));
+        int effectiveSize = size != null ? size : (limit != null ? limit : 12);
+        return ResponseEntity.ok(searchService.search(effectiveQuery, category, mergedTags, page, effectiveSize, semantic));
     }
 }

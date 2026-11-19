@@ -19,10 +19,10 @@ public class AiClientConfig {
         // on cleartext http:// requests, which causes missing-body 422 errors.
         HttpClient httpClient = HttpClient.newBuilder()
                 .version(HttpClient.Version.HTTP_1_1)
-                .connectTimeout(Duration.ofSeconds(10))
+                .connectTimeout(Duration.ofSeconds(6))
                 .build();
         JdkClientHttpRequestFactory requestFactory = new JdkClientHttpRequestFactory(httpClient);
-        requestFactory.setReadTimeout(Duration.ofSeconds(60));
+        requestFactory.setReadTimeout(Duration.ofSeconds(14));
         return RestClient.builder()
                 .requestFactory(requestFactory)
                 .build();
